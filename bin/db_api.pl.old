@@ -1,0 +1,574 @@
+#! /usr/local/bin/perl
+
+use Authen::Libwrap qw( hosts_ctl STRING_UNKNOWN);
+use IO::Socket;
+use Net::FTP;
+use DBI;
+
+require "config.pl";
+
+$port=$API{'db'}{'port'};
+$max_client=10;
+
+$serv = IO::Socket::INET->new (
+    LocalPort   =>  $port,
+    Type        =>  SOCK_STREAM,
+    Reuse       =>  1,
+    Listen      =>  $max_client)
+  || die "Cannot setup server on port $port:$@ \n";
+
+
+while ($client = $serv->accept()) {
+## Greeting
+print $client "+OK Welcome!\n";
+$buf=<$client>; chomp($buf); $buf=~s /\r//g;
+if ($buf eq 'adduser') {
+	# Add user
+	print $client "+OK Give me id pass domain ms\n";
+	$buf=<$client>; chomp($buf); $buf=~s /\r//g;
+	($id, $pass, $domain, $ms) =split(/\s+/, $buf);
+	if ($id && $pass && $domain) {
+		# get domain id and check id is availiable
+		$dsn=sprintf("DBI:mysql:%s;host=%s", $DB{'mta'}{'name'}, $DB{'mta'}{'host'});
+		$dbh=DBI->connect($dsn, $DB{'mta'}{'user'}, $DB{'mta'}{'pass'})
+			|| die_db($!);
+		$sqlstmt=sprintf("select s_idx from DomainTransport where s_domain='%s'", $domain);
+		$sth=$dbh->prepare($sqlstmt);
+		$sth->execute();
+		if ($sth->rows != 1) {
+			print $client "-ERR no such domain\n";
+			$dbh->disconnect;
+			close($client);
+			next;
+		}
+		($domain_id)=($sth->fetchrow_array)[0];
+		# find ms's real hostnode
+		$sqlstmt=sprintf("select s_nodename from HostMap where s_hostname='%s' AND s_domain=%d", $ms, $domain_id);
+		$sth=$dbh->prepare($sqlstmt);
+		$sth->execute();
+		if ($sth->rows != 1) {
+			print STROUT "-ERR no such ms\n";
+			$dbh->disconnect;
+			close($client);
+			next;
+		}
+		($ms_node)=($sth->fetchrow_array)[0];
+		# check id is availiable
+		if (substr($id, 0, 1) eq '.' || substr($id, 1, 1) eq '.' || substr($id, 0, 1) eq '_' || substr($id, 0, 1) eq '!' || length($id)<2) {
+			print $client "-ERR wrong id!\n";
+			close($client);
+			next;
+		}
+		$sqlstmt=sprintf("select * from Suspend where s_mailid='%s' AND s_domain=%d",
+				lc($id), $domain_id);
+		$sth=$dbh->prepare($sqlstmt);
+		$sth->execute();
+		if ($sth->rows != 0) {
+			print $client "-ERR this id was suspended\n";
+			$dbh->disconnect;
+			close($client);
+			next;
+		}
+		$sqlstmt=sprintf("select * from MailCheck where s_mailid='%s' AND s_domain=%d",
+				lc($id), $domain_id);
+		$sth=$dbh->prepare($sqlstmt);
+		$sth->execute();
+		if ($sth->rows != 0) {
+			print $client "-ERR this id was existed\n";
+			$dbh->disconnect;
+			close($client);
+			next;
+		}
+		
+		print $client "+OK $id $pass $domain_id $ms_node\n";
+		$buf=<$client>; chomp($buf); $buf=~s /\r//g;
+		if ($buf eq 'go') {
+			# do jobs
+			# 1. add to mailcheck & mailpass
+			$mbox=substr(lc($id), 0, 1)."/".substr(lc($id), 1, 1)."/".lc($id);
+			$sqlstmt=sprintf("insert into MailCheck values ('%s', %d, '%s', '%s', 0)",
+					lc($id), $domain_id, $ms, $mbox);
+			$dbh->do($sqlstmt);
+			$sqlstmt=sprintf("delete from MailPass where s_mailid='%s' AND s_domain=%d",
+					lc($id), $domain_id);
+			$dbh->do($sqlstmt);
+			$sqlstmt=sprintf("insert into MailPass values ('%s', %d, ENCRYPT('%s'), '%s', NOW())",
+					lc($id), $domain_id, $pass, $pass);
+			$dbh->do($sqlstmt);
+
+			# 2. build mailbox
+			# TODO: call ms api to build mbox
+			$socket=IO::Socket::INET->new(
+					PeerAddr		=>	$ms,
+					PeerPort		=>	$API{'ms'}{'port'},
+					Proto				=>	'tcp',
+					Type				=>	SOCK_STREAM)
+				|| die_socket($@);
+			do {
+				$buf=<$socket>; chomp($buf); $buf=~s /\r//g;
+				($buf)=(split(/\s+/, $buf))[0];
+			} while ($buf ne '+OK' && $buf ne '-ERR');
+
+			if ($buf eq '-ERR') {
+				print $client "-ERR socket error\n";
+				close($socket);
+				close($client);
+				next;
+			}
+
+			print $socket "createmdir\n";
+
+			do {
+				$buf=<$socket>; chomp($buf); $buf=~s /\r//g;
+				($buf)=(split(/\s+/, $buf))[0];
+			} while ($buf ne '+OK' && $buf ne '-ERR');
+
+			if ($buf eq '-ERR') {
+				print $client "-ERR socket error\n";
+				close($socket);
+				close($client);
+				next;
+			}
+
+			$mpath=sprintf("/mnt/%s/%s", $ms, $mbox);
+			print $socket "$mpath\n";
+
+			do {
+				$buf=<$socket>; chomp($buf); $buf=~s /\r//g;
+				($buf)=(split(/\s+/, $buf))[0];
+			} while ($buf ne '+OK' && $buf ne '-ERR');
+
+			if ($buf eq '-ERR') {
+				print $client "-ERR socket error\n";
+				close($socket);
+				close($client);
+				next;
+			}
+			
+			$dsn=sprintf("DBI:mysql:%s;host=%s", $DB{'rec'}{'name'}, $DB{'rec'}{'host'});
+			$dbh2=DBI->connect($dsn, $DB{'rec'}{'user'}, $DB{'rec'}{'pass'})
+				|| die_db($!);
+			$sqlstmt=sprintf("delete from MailRecord_%s where s_mailid='%s' and s_domain=%d",
+					substr(lc($id), 0, 1), lc($id), $domain_id);
+			$dbh2->do($sqlstmt);
+			$sqlstmt=sprintf("insert into MailRecord_%s values ('%s', %d, NOW(), NOW(), NOW(), '','','')",
+					substr(lc($id), 0, 1), lc($id), $domain_id);
+			$dbh2->do($sqlstmt);
+			$dbh2->disconnect();
+
+			close($socket);
+			print $client "+OK Done!\n";
+			open(FH, ">>/tmp/api.log");
+			print FH "$id\tAdd\t".`date`;
+			close(FH);
+
+		} else {
+			print $client "-ERR Wrong command!\n";
+			$dbh->disconnect;
+			close($client);
+			next;
+		}		
+		close($client);
+		next;
+		
+	} else {
+		print $client "-ERR Format error!\n";
+		close($client);
+		next;
+	}
+} elsif ($buf eq 'deluser') {
+	print $client "+OK Give me id domain\n";
+	$buf=<$client>; chomp($buf); $buf=~s /\r//g;
+	($id, $domain)=split(/\s+/,$buf);
+	
+	if ($id && $domain) {
+		$dsn=sprintf("DBI:mysql:%s;host=%s", $DB{'mta'}{'name'}, $DB{'mta'}{'host'});
+		$dbh=DBI->connect($dsn, $DB{'mta'}{'user'}, $DB{'mta'}{'pass'})
+			|| die_db($!);
+		$sqlstmt=sprintf("select s_idx from DomainTransport where s_domain='%s'", $domain);
+		$sth=$dbh->prepare($sqlstmt);
+		$sth->execute();
+		if ($sth->rows != 1) {
+			print $client "-ERR no such domain\n";
+			$dbh->disconnect;
+			close($client);
+			next;
+		}
+		($domain_id)=($sth->fetchrow_array)[0];
+
+		$sqlstmt=sprintf("select s_mbox, s_mhost from MailCheck where s_mailid='%s' and s_domain=%d",
+				lc($id), $domain_id);
+		$sth=$dbh->prepare($sqlstmt);
+		$sth->execute();
+		if ($sth->rows !=1) {
+			print $client "-ERR no such user\n";
+			$dbh->disconnect;
+			close($client);
+			next;
+		}
+		($s_mbox, $s_mhost)=($sth->fetchrow_array)[0,1];
+		$s_path=sprintf("/mnt/%s/%s", $s_mhost, $s_mbox);
+
+		## Do jobs
+		# 1, delete all database record
+		$sqlstmt=sprintf("delete from MailCheck where s_mailid='%s' and s_domain=%d",
+				lc($id), $domain_id);
+		$dbh->do($sqlstmt);
+
+		$sqlstmt=sprintf("delete from MailPass where s_mailid='%s' and s_domain=%d",
+				lc($id), $domain_id);
+		$dbh->do($sqlstmt);
+		# 2. delete mdir
+		$socket=IO::Socket::INET->new(
+				PeerAddr		=>	$s_mhost,
+				PeerPort		=>	$API{'ms'}{'port'},
+				Proto				=>	'tcp',
+				Type				=>	SOCK_STREAM)
+			|| die_socket($@);
+		do {
+			$buf=<$socket>; chomp($buf); $buf=~s /\r//g;
+			($buf)=(split(/\s+/, $buf))[0];
+		} while ($buf ne '+OK' && $buf ne '-ERR');
+
+		if ($buf eq '-ERR') {
+			print $client "-ERR socket error\n";
+			close($socket);
+			close($client);
+			next;
+		}
+
+		print $socket "deletemdir\n";
+
+		do {
+			$buf=<$socket>; chomp($buf); $buf=~s /\r//g;
+			($buf)=(split(/\s+/, $buf))[0];
+		} while ($buf ne '+OK' && $buf ne '-ERR');
+
+		if ($buf eq '-ERR') {
+			print $client "-ERR socket error\n";
+			close($socket);
+			close($client);
+			next;
+		}
+
+		print $socket "$s_path\n";
+
+		do {
+			$buf=<$socket>; chomp($buf); $buf=~s /\r//g;
+			($buf)=(split(/\s+/, $buf))[0];
+		} while ($buf ne '+OK' && $buf ne '-ERR');
+
+		if ($buf eq '-ERR') {
+			print $client "-ERR socket error\n";
+			close($socket);
+			close($client);
+			next;
+		}
+		
+		close($socket);
+		print $client "+OK Done!\n";
+		open(FH, ">>/tmp/api.log");
+		print FH "$id\tDelete\t".`date`;
+		close(FH);
+		
+	} else {
+		print $client "-ERR Wrong format!\n";
+		close($client);
+		next;
+	}
+	
+} elsif ($buf eq 'sususer') {
+	print $client "+OK Give me id domain\n";
+	$buf=<$client>; chomp($buf); $buf=~s /\r//g;
+	($id, $domain)=split(/\s+/,$buf);
+	
+	if ($id && $domain) {
+		$dsn=sprintf("DBI:mysql:%s;host=%s", $DB{'mta'}{'name'}, $DB{'mta'}{'host'});
+		$dbh=DBI->connect($dsn, $DB{'mta'}{'user'}, $DB{'mta'}{'pass'})
+			|| die_db($!);
+		$sqlstmt=sprintf("select s_idx from DomainTransport where s_domain='%s'", $domain);
+		$sth=$dbh->prepare($sqlstmt);
+		$sth->execute();
+		if ($sth->rows != 1) {
+			print $client "-ERR no such domain\n";
+			$dbh->disconnect;
+			close($client);
+			next;
+		}
+		($domain_id)=($sth->fetchrow_array)[0];
+
+		$sqlstmt=sprintf("select * from MailCheck where s_mailid='%s' and s_domain=%d",
+				lc($id), $domain_id);
+		$sth=$dbh->prepare($sqlstmt);
+		$sth->execute();
+		if ($sth->rows !=1) {
+			print $client "-ERR no such user\n";
+			$dbh->disconnect;
+			close($client);
+			next;
+		}
+		($s_mailid, $s_domain, $s_mhost, $s_mbox, $s_status) = $sth->fetchrow_array();
+		$s_path=sprintf("/mnt/%s/%s", $s_mhost, $s_mbox);
+		# get rawpass
+		$sqlstmt=sprintf("select s_rawpass from MailPass where s_mailid='%s' and s_domain=%d",
+				lc($id), $domain_id);
+		$sth=$dbh->prepare($sqlstmt);
+		$sth->execute();
+		if ($sth->rows !=1) {
+			print $client "-ERR No password record?\n";
+			$dbh->disconnect;
+			close($client);
+			next;
+		}
+		($s_rawpass)=($sth->fetchrow_array)[0];
+
+		## Do jobs
+		# 1, delete all database record
+		$sqlstmt=sprintf("delete from MailCheck where s_mailid='%s' and s_domain=%d",
+				lc($id), $domain_id);
+		$dbh->do($sqlstmt);
+
+		$sqlstmt=sprintf("delete from MailPass where s_mailid='%s' and s_domain=%d",
+				lc($id), $domain_id);
+		$dbh->do($sqlstmt);
+		# 2. Record
+		$sqlstmt=sprintf("insert into Suspend values ('%s', %d, '%s', '%s', '%s', NOW())",
+				$s_mailid, $s_domain, $s_rawpass, $s_mhost, $s_mbox);
+		$dbh->do($sqlstmt);
+		# 3. delete mdir
+#		$socket=IO::Socket::INET->new(
+#				PeerAddr		=>	$s_mhost,
+#				PeerPort		=>	$API{'ms'}{'port'},
+#				Proto				=>	'tcp',
+#				Type				=>	SOCK_STREAM)
+#			|| die_socket($@);
+#		do {
+#			$buf=<$socket>; chomp($buf); $buf=~s /\r//g;
+#			($buf)=(split(/\s+/, $buf))[0];
+#		} while ($buf ne '+OK' && $buf ne '-ERR');
+
+#		if ($buf eq '-ERR') {
+#			print $client "-ERR socket error\n";
+#			close($socket);
+#			close($client);
+#			next;
+#		}
+
+#		print $socket "deletemdir\n";
+
+#		do {
+#			$buf=<$socket>; chomp($buf); $buf=~s /\r//g;
+#			($buf)=(split(/\s+/, $buf))[0];
+#		} while ($buf ne '+OK' && $buf ne '-ERR');
+
+#		if ($buf eq '-ERR') {
+#			print $client "-ERR socket error\n";
+#			close($socket);
+#			close($client);
+#			next;
+#		}
+
+#		print $socket "$s_path\n";
+
+#		do {
+#			$buf=<$socket>; chomp($buf); $buf=~s /\r//g;
+#			($buf)=(split(/\s+/, $buf))[0];
+#		} while ($buf ne '+OK' && $buf ne '-ERR');
+
+#		if ($buf eq '-ERR') {
+#			print $client "-ERR socket error\n";
+#			close($socket);
+#			close($client);
+#			next;
+#		}
+#		
+#		close($socket);
+
+		print $client "+OK Done!\n";
+		close($client);
+		next;
+		
+	} else {
+		print $client "-ERR Wrong format!\n";
+		close($client);
+		next;
+	}
+} elsif ($buf eq 'unsususer') {
+	print $client "+OK Give me id domain\n";
+	$buf=<$client>; chomp($buf); $buf=~s /\r//g;
+	($id, $domain)=split(/\s+/,$buf);
+	
+	if ($id && $domain) {
+		$dsn=sprintf("DBI:mysql:%s;host=%s", $DB{'mta'}{'name'}, $DB{'mta'}{'host'});
+		$dbh=DBI->connect($dsn, $DB{'mta'}{'user'}, $DB{'mta'}{'pass'})
+			|| die_db($!);
+		$sqlstmt=sprintf("select s_idx from DomainTransport where s_domain='%s'", $domain);
+		$sth=$dbh->prepare($sqlstmt);
+		$sth->execute();
+		if ($sth->rows != 1) {
+			print $client "-ERR no such domain\n";
+			$dbh->disconnect;
+			close($client);
+			next;
+		}
+		($domain_id)=($sth->fetchrow_array)[0];
+
+		$sqlstmt=sprintf("select s_mailid, s_domain, s_rawpass, s_mhost, s_mbox from Suspend where s_mailid='%s' and s_domain=%d",
+				lc($id), $domain_id);
+		$sth=$dbh->prepare($sqlstmt);
+		$sth->execute();
+		if ($sth->rows !=1) {
+			print $client "-ERR no such user\n";
+			$dbh->disconnect;
+			close($client);
+			next;
+		}
+		($s_mailid, $s_domain, $s_rawpass, $s_mhost, $s_mbox)=$sth->fetchrow_array;
+
+		$sqlstmt=sprintf("delete from Suspend where s_mailid='%s' and s_domain=%d",
+				lc($id), $domain_id);
+		$dbh->do($sqlstmt);
+		
+		## Do jobs
+		# 1, insert back all database record
+		$sqlstmt=sprintf("insert into MailCheck values ('%s', %d, '%s', '%s', 0)",
+				lc($id), $domain_id, $s_mhost, $s_mbox);
+		$dbh->do($sqlstmt);
+
+		$sqlstmt=sprintf("insert into MailPass values ('%s', %d, ENCRYPT('%s'), '%s', NOW())",
+				lc($id), $domain_id, $s_rawpass, $s_rawpass);
+		$dbh->do($sqlstmt);
+		# 2. create mdir
+#			$socket=IO::Socket::INET->new(
+#					PeerAddr		=>	$s_mhost,
+#					PeerPort		=>	$API{'ms'}{'port'},
+#					Proto				=>	'tcp',
+#					Type				=>	SOCK_STREAM)
+#				|| die_socket($@);
+#			do {
+#				$buf=<$socket>; chomp($buf); $buf=~s /\r//g;
+#				($buf)=(split(/\s+/, $buf))[0];
+#			} while ($buf ne '+OK' && $buf ne '-ERR');
+
+#			if ($buf eq '-ERR') {
+#				print $client "-ERR socket error\n";
+#				close($socket);
+#				close($client);
+#				next;
+#			}
+
+#			print $socket "createmdir\n";
+#
+#			do {
+#				$buf=<$socket>; chomp($buf); $buf=~s /\r//g;
+#				($buf)=(split(/\s+/, $buf))[0];
+#			} while ($buf ne '+OK' && $buf ne '-ERR');
+#
+#			if ($buf eq '-ERR') {
+#				print $client "-ERR socket error\n";
+#				close($socket);
+#				close($client);
+#				next;
+#			}
+#
+#			$mpath=sprintf("/mnt/%s/%s", $s_mhost, $s_mbox);
+#			print $socket "$mpath\n";
+#
+#			do {
+#				$buf=<$socket>; chomp($buf); $buf=~s /\r//g;
+#				($buf)=(split(/\s+/, $buf))[0];
+#			} while ($buf ne '+OK' && $buf ne '-ERR');
+#
+#			if ($buf eq '-ERR') {
+#				print $client "-ERR socket error\n";
+#				close($socket);
+#				close($client);
+#				next;
+#			}
+			
+			$dsn=sprintf("DBI:mysql:%s;host=%s", $DB{'rec'}{'name'}, $DB{'rec'}{'host'});
+			$dbh2=DBI->connect($dsn, $DB{'rec'}{'user'}, $DB{'rec'}{'pass'})
+				|| die_db($!);
+			$sqlstmt=sprintf("delete from MailRecord_%s where s_mailid='%s' and s_domain=%d",
+					substr(lc($id), 0, 1), lc($id), $domain_id);
+			$dbh2->do($sqlstmt);
+			$sqlstmt=sprintf("insert into MailRecord_%s values ('%s', %d, NOW(), NOW(), NOW(), '','','')",
+					substr(lc($id), 0, 1), lc($id), $domain_id);
+			$dbh2->do($sqlstmt);
+			$dbh2->disconnect();
+
+#			close($socket);
+			print $client "+OK Done!\n";
+			close($client);
+			next;	
+	} else {
+		print $client "-ERR Wrong format!\n";
+		close($client);
+		next;
+	}
+} elsif ($buf eq 'changepass') {
+	print $client "+OK Tell me <id> <domain> <new_password>\n";
+	$buf=<$client>; chomp($buf); $buf=~s /\r//g;
+	($id, $domain, $pass)=split(/\s+/, $buf);
+	if ($id && $domain) {
+		$dsn=sprintf("DBI:mysql:%s;host=%s", $DB{'mta'}{'name'}, $DB{'mta'}{'host'});
+		$dbh=DBI->connect($dsn, $DB{'mta'}{'user'}, $DB{'mta'}{'pass'})
+			|| die_db($!);
+		$sqlstmt=sprintf("select s_idx from DomainTransport where s_domain='%s'", $domain);
+		$sth=$dbh->prepare($sqlstmt);
+		$sth->execute();
+		if ($sth->rows != 1) {
+			print $client "-ERR no such domain\n";
+			$dbh->disconnect;
+			close($client);
+			next;
+		}
+		($domain_id)=($sth->fetchrow_array)[0];
+
+		$sqlstmt=sprintf("select * from MailPass where s_mailid='%s' and s_domain=%d",
+				lc($id), $domain_id);
+		$sth=$dbh->prepare($sqlstmt);
+		$sth->execute();
+		if ($sth->rows !=1) {
+			print $client "-ERR no such user\n";
+			$dbh->disconnect;
+			close($client);
+			next;
+		}
+
+		$sqlstmt=sprintf("update MailPass set s_rawpass='%s', s_encpass=ENCRYPT('%s') where s_mailid='%s' and s_domain=%d",
+				$pass, $pass, $id, $domain_id);
+		$dbh->do($sqlstmt);
+		$dbh->disconnect();
+		print $client "+OK done!\n";
+		close($client);
+	} else {
+		print $client "-ERR format error!\n";
+		close($client);
+		next;
+	}
+
+} else {
+	print $client "-ERR Wrong Command: $buf!\n";
+	close($client);
+	next;
+}
+
+
+
+}
+next;
+
+sub die_db {
+	$msg=$_[0];
+	print $client "-ERR Cannot connect to database: $msg\n";
+	close($client);
+	next;
+}
+
+sub die_socket {
+	$msg=$_[0];
+	print $client "-ERR Cannot connect to api socket: $msg\n";
+	close($client);
+	next;
+}

@@ -1,0 +1,175 @@
+#! /usr/local/bin/perl
+
+
+use Authen::Libwrap qw( hosts_ctl STRING_UNKNOWN);
+use IO::Socket;
+use Net::FTP;
+use DBI;
+
+require "config.pl";
+
+$port=$API{'ms'}{'port'};
+$max_client=10;
+
+$serv = IO::Socket::INET->new (
+    LocalPort	=>  $port,
+    Type	=>  SOCK_STREAM,
+    Reuse	=>  1,
+    Listen	=>  $max_client)
+  || die "Cannot setup server on port $port:$@ \n";
+
+
+
+while ($client = $serv->accept()) {
+  if (!hosts_ctl("ms_api", $client)) {
+    print $client "Access deny!\n";
+    close($client);
+    next;
+  }
+
+  print $client "+OK Welcome!\n";
+  $buf=<$client>; chomp($buf); $buf=~s /\r//g;
+
+  if ($buf eq 'createmdir') {
+    print $client "+OK Give me path to create!\n";
+    $buf=<$client>;chomp($buf); $buf=~s /\r//g;
+    $path=$buf;
+    $path=~s /\r//g;
+    if (-e $path) {
+      print $client "-ERR Path exist!\n";
+    } else {
+  #    mkdir("$path");
+      system("mkdir -p $path");
+      mkdir("$path/Maildir");
+      mkdir("$path/Maildir/new");
+      chown 5000, 5000, "$path";
+      chown 5000, 5000, "$path/Maildir";
+      chown 5000, 5000, "$path/Maildir/new";
+      print $client "+OK Done!\n";
+    }
+    close($client);
+    next;
+  } elsif ($buf eq 'deletemdir') {
+    print $client "+OK Give me path to delete!\n";
+    $buf=<$client>;chomp($buf); $buf=~s /\r//g;
+    $path=$buf;
+    $path=~s /\r//g;
+    if (-e $path) {
+      system("/bin/rm -rf $path");
+      if (!-e $path) {
+        print $client "+OK Done!\n";
+      } else {
+        print $client "-ERR Delete fail!\n";
+      }
+    } else {
+      print $client "-ERR no such dir!\n";
+    }
+    close($client);
+    next;
+  } elsif ($buf eq 'setquota') {
+    print $client "+OK Give me path and quota!\n";
+    $buf=<$client>;chomp($buf); $buf=~s /\r//g;
+    ($path, $quota)=split(/\s+/, $buf);
+    if (!-e $path) {
+      print $client "-ERR Path not exist!\n";
+      close($client);
+      next;
+    }
+    open(FH, ">$path/.quota");
+    print FH "$quota";
+    close(FH);
+    print $client "+OK Done!\n";
+    close($client);
+    next;
+  } elsif ($buf eq 'getquota') {
+    print $client "+OK Give me path!\n";
+    $buf=<$client>;chomp($buf); $buf=~s /\r//g;
+    $path=$buf;
+    if (!-e $path) {
+      print $client "-ERR no such path!\n";
+      close($client);
+      next;
+    }
+    if (!-e "$path/.quota") {
+      print $client "+OK 0\n";
+      close($client);
+      next;
+
+    } else {
+      open(FH, "<$path/.quota");
+      $quota=<FH>; chomp($quota);
+      close(FH);
+      print $client "+OK $quota\n";
+      close($client);
+      next;
+    }
+  
+  } elsif ($buf eq 'packuser') {
+    print $client "+OK Give me path!\n";
+    $buf=<$client>;chomp($buf); $buf=~s /\r//g;
+    $path=$buf;
+    if (!-e $path) {
+      print $client "-ERR No such path!\n";
+      close($client);
+      next;
+    }
+    @dmy=split(/\//, $path);
+    $id=$dmy[scalar(@dmy)-1];
+    $dmy[scalar(@dmy)-1]='';
+    $prefix=join('/', @dmy);
+    chdir($prefix);
+    system("/usr/local/bin/tar -zcspf /tmp/$id.tar.gz $id");
+  
+    if (-e "/tmp/$id.tar.gz") {
+      print $client "+OK Pack done!\n";
+    } else {
+      print $client "-ERR Pack fail!\n";
+    }
+    close($client);;
+    next;
+  
+  } elsif ($buf eq 'unpackuser') {
+    print $client "+OK Give me id old-ms new-path!\n";
+    $buf=<$client>; chomp($buf); $buf=~s /\r//g;
+    chdir("/tmp/");
+    ($id, $ms, $path)=split(/\s+/,$buf);
+    $ftp=Net::FTP->new("$ms", Debug => 0)
+      || die_socket($@);
+    $ftp->login($FTP{'user'}, $FTP{'pass'});
+    $ftp->cwd("/tmp/");
+    $ftp->binary;
+    $ftp->get("$id.tar.gz")
+      || die_socket($ftp->message);
+    $ftp->quit;
+    if (!-e "/tmp/$id.tar.gz") {
+      print $client "-ERR No packed file!\n";
+      close($client);
+      next;
+    }
+    @dmy=split(/\//, $path);
+    $dmy[scalar(@dmy)-1]='';
+    $prefix=join('/', @dmy);
+		system("mkdir -p $prefix") if (!-e $prefix);
+    chdir($prefix);
+    system("/usr/local/bin/tar -zxspf /tmp/$id.tar.gz");
+    if (-e $path) {
+      print $client "+OK Done!\n";
+    } else {
+      print $client "-ERR Fail!\n";
+    }
+    close($client);
+    next;
+  } else {
+    print $client "-ERR Wrong Command!\n";
+  }
+  
+  
+  
+  
+  
+
+
+  close($client);
+}
+
+close($serv);

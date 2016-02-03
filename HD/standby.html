@@ -1,0 +1,19 @@
+<?
+  if(!isset($PHP_AUTH_USER)) {
+    Header("WWW-Authenticate: Basic realm=\"請輸入帳號及密碼\"");
+    Header("HTTP/1.0 401 Unauthorized");
+    echo "輸入錯誤\n";
+    exit;
+  } else {
+    $crypt_PHP_AUTH_PW = crypt($PHP_AUTH_PW,substr($crypt_pwd,0,2));
+    if(!strcmp($crypt_PHP_AUTH_PW,)) {
+       return ($PHP_AUTH_USER);
+       exit;
+    } else {
+/*       Header("Location: http://localhost/~tony/wrong.htm"); */
+       Header("WWW-Authenticate: Basic realm=\"請輸入帳號及密碼\"");
+       Header("HTTP/1.0 401 Unauthorized");
+       echo "輸入錯誤\n";
+       exit;
+    }
+

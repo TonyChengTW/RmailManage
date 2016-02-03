@@ -1,0 +1,4 @@
+AuthUserFile /export/home/rmail/htdocs/HD/.passwd
+AuthName "客服Leader管理介面"
+AuthType Basic
+require valid-user

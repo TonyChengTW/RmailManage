@@ -1,0 +1,209 @@
+<?php
+  require "config.php";
+
+  // Prepare all required data
+  $dbh=mysql_connect($DB['mta']['host'], $DB['mta']['user'], $DB['mta']['pass']);
+  mysql_select_db($DB['mta']['name'], $dbh);
+  $sqlstmt="select distinct s_hostname from HostMap";
+  $sth=mysql_query($sqlstmt);
+  $idx=0;
+  while ($obj=mysql_fetch_object($sth)) {
+    $nodes[$idx]=$obj->s_hostname;
+    $idx++;
+  }
+
+  $sqlstmt="select distinct s_domain from DomainTransport";
+  $sth=mysql_query($sqlstmt);
+  $idx=0;
+  while ($obj=mysql_fetch_object($sth)) {
+    $domains[$idx]=$obj->s_domain;
+    $idx++;
+  }
+
+  mysql_close($dbh);
+
+?>
+
+
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=big5">
+<title>Rmail Manager v1.2</title>
+</head>
+
+<body bgcolor="#FFFFCC">
+<p align="center"><strong><font size="6">Rmail Manager v1.2</strong>         <font size="3">Written by Miko Cheng<font></p>
+<hr>
+<p align="center"><font size="6"><strong>User Management</strong></p>
+<p align="center"><font size="6"><strong>Permission : rmail </strong></p>
+<div align="center"><table width="80%" border="1">
+  <tr> 
+    <td><h4>Query User</h4>
+<form action="query_user.php" method="post">
+Uesr: <input type="text" name="s_mailid" maxlength="14">
+Domain: <select name="s_domain">
+<?php
+  for ($idx=0; $idx<count($domains); $idx++) {
+            printf("<option value='%s'>%s</option>", $domains[$idx], $domains[$idx]);
+                      }
+?>
+</select>
+<br><input type="submit"><br>
+</form>
+
+			</td>
+    <td><h4>Change Password</h4>
+<form action="change_pass.php" method="post">
+User: <input type="text" name="s_mailid" maxlength="14"><br>
+Domain: <select name="s_domain">
+<?php
+  for ($idx=0; $idx<count($domains); $idx++) {
+        printf("<option value='%s'>%s</option>", $domains[$idx], $domains[$idx]);
+          }
+?>
+</select>
+Password: <input type="text" name="s_rawpass" maxlength="14"><br>
+<br><input type="submit"><br>
+</form>
+      </td>
+  </tr>
+  <tr> 
+    <td><h4>Query E-Mail Address in Blacklist/Whitelist</h4>
+<form action="http://rmail.ebtnet.net/cgi-bin/query_denymailfrom.pl" method="post">
+E-Mail: <input type="text" name="s_mailfrom" maxlength="50"><br>
+<br><input type="submit"><br>
+</form>
+
+      </td>
+    <td><h4>Query IP Address in Blacklist/Whitelist</h4>
+<form action="http://rmail.ebtnet.net/cgi-bin/query_denyip.pl" method="post">
+IP: <input type="text" name="s_ip" maxlength="16"><br>
+<br><input type="submit"><br>
+</form>
+
+      </td>
+  </tr>
+  <tr>
+    <td><h4>Remove E-Mail Address from Blacklist</h4>
+<form action="http://rmail.ebtnet.net/cgi-bin/remove_denymailfrom.pl" method="post">
+E-Mail: <input type="text" name="s_mailfrom" maxlength="50"><br>
+<br><input type="submit"><br>
+</form>
+
+      </td>
+    <td><h4>Remove IP Address from Blacklist</h4>
+<form action="http://rmail.ebtnet.net/cgi-bin/remove_denyip.pl" method="post">
+IP: <input type="text" name="s_ip" maxlength="16"><br>
+<br><input type="submit"><br>
+</form>
+
+      </td></tr>
+  <tr>
+    <td><h4>Add User</h4>
+<form action="create_user.php" method="post">
+User: <input type="text" name="s_mailid" maxlength="14"><br>
+Password: <input type="text" name="s_rawpass" maxlength="14"><br>
+Domain: <select name="s_domain">
+<?php
+  for ($idx=0; $idx<count($domains); $idx++) {
+        printf("<option value='%s'>%s</option>", $domains[$idx], $domains[$idx]);
+          }
+?>
+</select>
+Hosts: <select name="s_mhost">
+<?php
+  for ($idx=0; $idx<count($nodes); $idx++) {
+    printf("<option value='%s'>%s</option>", $nodes[$idx], $nodes[$idx]);
+  }
+?>
+</select>
+<br><input type="submit"><br>
+</form>
+
+      </td>
+    <td><h4>Delete User</h4>
+<form action="delete_user.php" method="post">
+User: <input type="text" name="s_mailid" maxlength="14"><br>
+Domain: <select name="s_domain">
+<?php
+  for ($idx=0; $idx<count($domains); $idx++) {
+            printf("<option value='%s'>%s</option>", $domains[$idx], $domains[$idx]);
+                      }
+?>
+</select>
+<br><input type="submit"><br>
+</form>
+
+      </td>
+  </tr>
+  <tr>
+    <td><h4>Suspend User</h4>
+<form action="suspend_user.php" method="post">
+User:  <input type="text" name="s_mailid" maxlength="14"><br>
+Domain: <select name="s_domain">
+<?php
+  for ($idx=0; $idx<count($domains); $idx++) {
+                printf("<option value='%s'>%s</option>", $domains[$idx], $domains[$idx]);
+                                      }
+?>
+</select>
+<br><input type="submit"><br>
+</form>
+
+      </td>
+    <td><h4>Un-suspend User</h4>
+<form action="unsuspend_user.php" method="post">
+User:  <input type="text" name="s_mailid" maxlength="14"><br>
+Domain: <select name="s_domain">
+<?php
+  for ($idx=0; $idx<count($domains); $idx++) {
+                printf("<option value='%s'>%s</option>", $domains[$idx], $domains[$idx]);
+                                      }
+?>
+</select>
+<br><input type="submit"><br>
+</form>
+
+      </td>
+  </tr>
+  <tr> 
+    <td><h4>Move User</h4>
+<form action="move_user.php" method="post">
+User: <input type="text" name="s_mailid" maxlength="14"><br>
+Move to: <select name="s_mhost">
+<?php
+  for ($idx=0; $idx<count($nodes); $idx++) {
+        printf("<option value='%s'>%s</option>", $nodes[$idx], $nodes[$idx]);
+          }
+?>
+</select>
+Domain: <select name="s_domain">
+<?php
+  for ($idx=0; $idx<count($domains); $idx++) {
+                printf("<option value='%s'>%s</option>", $domains[$idx], $domains[$idx]);
+                                      }
+?>
+</select>
+<br><input type="submit"><br>
+</form>
+
+      </td>
+    <td><h4>Set Quota</h4>
+<form action="set_quota.php" method="post">
+User: <input type="text" name="s_mailid" maxlength="14"><br>
+Domain: <select name="s_domain">
+<?php
+  for ($idx=0; $idx<count($domains); $idx++) {
+                printf("<option value='%s'>%s</option>", $domains[$idx], $domains[$idx]);
+                                      }
+?>
+</select>
+Quota: <input type="text" name="s_quota" maxlength="14">(bytes)
+<br><input type="submit"><br>
+</form>
+
+      </td>
+  </tr>
+</table></div>
+</body>
+</html>

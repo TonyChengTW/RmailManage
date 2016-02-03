@@ -1,0 +1,4 @@
+AuthUserFile /export/home/rmail/htdocs/RmailManage/.passwd
+AuthName "Rmail Login"
+AuthType Basic
+require valid-user
