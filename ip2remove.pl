@@ -11,7 +11,7 @@ $n = scalar(@ARGV);
 die "ip2remove.pl list-file\n" until ($n eq 1);
 $accessfile = shift;
 
-$dbh = DBI->connect("DBI:mysql:mail_db;host=127.0.0.1", "rmail", "LykCR3t1") or die "$!\n";
+$dbh = DBI->connect("DBI:mysql:mail_db;host=127.0.0.1", "rmail", "xxxxxxx") or die "$!\n";
 
 open ACCESS, "$accessfile" or die "Can not open $accessfile:$!\n";
 while (<ACCESS>) {

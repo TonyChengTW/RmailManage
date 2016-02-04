@@ -9,7 +9,7 @@ use DBI;
 
 $accessfile = "relay.list";
 
-$dbh = DBI->connect("DBI:mysql:mail_db;host=127.0.0.1", "rmail", "LykCR3t1") or die "$!\n";
+$dbh = DBI->connect("DBI:mysql:mail_db;host=127.0.0.1", "rmail", "xxxxxxx") or die "$!\n";
 
 &insertip("127.0.0.1");
 

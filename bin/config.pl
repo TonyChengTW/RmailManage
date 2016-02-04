@@ -2,12 +2,12 @@
 
 $DB{'mta'}{'host'}='210.200.211.3';
 $DB{'mta'}{'user'}='rmail';
-$DB{'mta'}{'pass'}='LykCR3t1';
+$DB{'mta'}{'pass'}='xxxxxxx';
 $DB{'mta'}{'name'}='mail_db';
 
 $DB{'rec'}{'host'}='210.200.211.4';
 $DB{'rec'}{'user'}='rmail';
-$DB{'rec'}{'pass'}='LykCR3t1';
+$DB{'rec'}{'pass'}='xxxxxxx';
 $DB{'rec'}{'name'}='mail_db';
 
 $API{'db'}{'port'}=9999;

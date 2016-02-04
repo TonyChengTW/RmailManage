@@ -8,7 +8,7 @@
 use DBI;
 $db_host='210.200.211.3';
 $db_user='rmail';
-$db_passwd='LykCR3t1';
+$db_passwd='xxxxxxx';
 
 $dbh=DBI->connect("DBI:mysql:mail_db:$db_host", $db_user, $db_passwd) or die "can't connect $db_host:$!\n";
 

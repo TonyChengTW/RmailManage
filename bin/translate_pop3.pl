@@ -18,7 +18,7 @@ $file = $ARGV[0];
 $domain_id = $ARGV[1];
 $pop3_host = $ARGV[2];
 
-$dbh=DBI->connect("DBI:mysql:mail_db;host=210.200.211.3", "rmail", "LykCR3t1")
+$dbh=DBI->connect("DBI:mysql:mail_db;host=210.200.211.3", "rmail", "xxxxxxx")
   || die_db($!);
 
 $sqlstmt=sprintf("select * from DomainTransport where s_idx=%d", $domain_id);

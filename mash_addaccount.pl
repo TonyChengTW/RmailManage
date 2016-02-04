@@ -9,7 +9,7 @@ use DBI;
 
 $account_list = "account.list";
 
-$dbh = DBI->connect("DBI:mysql:mail_db;host=210.200.211.3", "rmail", "LykCR3t1") or die "$!\n";
+$dbh = DBI->connect("DBI:mysql:mail_db;host=210.200.211.3", "rmail", "xxxxxxx") or die "$!\n";
 
 open ACCOUNT, "$account_list" or die "Can not open $accessfile:$!\n";
 while (<ACCOUNT>) {

@@ -10,7 +10,7 @@ use DBI;
 $mail_file = shift || die "remove_list_from_deny.pl <mail list> <ip list>\n";
 $ip_file = shift;
 
-$dbh=DBI->connect('DBI:mysql:mail_db:210.200.211.3', 'rmail', 'LykCR3t1') or die "can't connect DB\n";
+$dbh=DBI->connect('DBI:mysql:mail_db:210.200.211.3', 'rmail', 'xxxxxxx') or die "can't connect DB\n";
 
 open MAIL ,"$mail_file" or die "can't open $mail_file:$!\n";
 while (<MAIL>) {

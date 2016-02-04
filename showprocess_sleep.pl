@@ -9,7 +9,7 @@ $sleep_time = shift || 100;
 
 print "sleep time = $sleep_time\n";
 $line_number = 0;
-@process = `/usr/local/etc/mysql/bin/mysqladmin -u rmail -pLykCR3t1 processlist`;
+@process = `/usr/local/etc/mysql/bin/mysqladmin -u rmail -pxxxxxxx processlist`;
 print "ID\tHost\t\tCommand\tTime\n";
 
 foreach (@process) {
